@@ -1,8 +1,7 @@
 from fastapi import APIRouter, UploadFile, HTTPException, File, Form
 from typing import Optional
 from pydantic import BaseModel
-import tempfile
-import os
+from backend.utils.file_handler import extract_text_from_file
 
 router = APIRouter()
 
@@ -18,26 +17,15 @@ async def upload_resume(
 ):
     """
     Upload and analyze a resume file
-    - Accepts PDF files
+    - Accepts PDF and DOCX files
     - Optionally compare against a job description
     """
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
-    
     try:
-        # Create a temporary file to store the uploaded PDF
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_path = temp_file.name
+        # Extract text from the uploaded file
+        resume_text = await extract_text_from_file(file)
         
-        # Here we'll add the resume analysis logic
-        analysis_result = {
-            "filename": file.filename,
-            "size": len(content),
-            "job_match": bool(job_description),
-            # Add more analysis fields here
-        }
+        # Analyze the extracted text
+        analysis_result = await analyze_resume_content(resume_text, job_description)
         
         return AnalysisResponse(
             success=True,
@@ -45,13 +33,57 @@ async def upload_resume(
             message="Resume successfully analyzed"
         )
             
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+async def analyze_resume_content(resume_text: str, job_description: Optional[str] = None) -> dict:
+    """
+    Analyze the content of a resume
+    """
+    analysis = {
+        "word_count": len(resume_text.split()),
+        "char_count": len(resume_text),
+        "sections_found": identify_resume_sections(resume_text),
+    }
+
+    if job_description:
+        analysis["job_match"] = compare_with_job_description(resume_text, job_description)
+
+    return analysis
+
+def identify_resume_sections(text: str) -> dict:
+    """
+    Identify common resume sections from the text
+    """
+    sections = {
+        "has_education": any(keyword in text.lower() for keyword in ["education", "degree", "university", "college"]),
+        "has_experience": any(keyword in text.lower() for keyword in ["experience", "work", "employment", "job"]),
+        "has_skills": any(keyword in text.lower() for keyword in ["skills", "technologies", "tools", "programming"]),
+        "has_projects": any(keyword in text.lower() for keyword in ["project", "portfolio", "development"]),
+        "has_contact": any(keyword in text.lower() for keyword in ["email", "phone", "contact", "linkedin"])
+    }
+    return sections
+
+def compare_with_job_description(resume: str, job_desc: str) -> dict:
+    """
+    Compare resume content with job description
+    """
+    resume_lower = resume.lower()
+    job_desc_lower = job_desc.lower()
     
-    finally:
-        # Clean up the temporary file
-        if 'temp_path' in locals():
-            os.unlink(temp_path)
+    # Extract keywords from job description (simple implementation)
+    job_words = set(job_desc_lower.split())
+    resume_words = set(resume_lower.split())
+    
+    matching_keywords = job_words.intersection(resume_words)
+    
+    return {
+        "matching_keywords": list(matching_keywords),
+        "keyword_match_count": len(matching_keywords),
+        "match_percentage": round(len(matching_keywords) / len(job_words) * 100, 2)
+    }
 
 @router.post("/analyze", response_model=AnalysisResponse)
 async def analyze_resume_text(
@@ -64,18 +96,11 @@ async def analyze_resume_text(
     - Optionally compare against a job description
     """
     try:
-        analysis_result = {
-            "word_count": len(resume_text.split()),
-            "char_count": len(resume_text),
-            "job_match": bool(job_description),
-            # Add more analysis fields here
-        }
-        
+        analysis_result = await analyze_resume_content(resume_text, job_description)
         return AnalysisResponse(
             success=True,
             analysis=analysis_result,
             message="Text successfully analyzed"
         )
-            
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

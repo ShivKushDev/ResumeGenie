@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import resume
+from backend.routes import resume
 
 app = FastAPI(
     title="ResumeGenie API",
